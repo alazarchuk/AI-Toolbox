@@ -1,11 +1,15 @@
-# Monthly_Reporting_(Phi_4).ipynb
+# AI Toolbox
+
+This repository contains a collection of AI tools and utilities.
+
+## Monthly_Reporting_(Phi_4).ipynb
 
 This Jupyter Notebook generates a monthly report summarizing the development work done by a specified author within a given date range. The report includes summaries of commit messages and translations of these summaries into Ukrainian.
 
-## File Path
+### File Path
 `Monthly_Reporting_(Phi_4).ipynb`
 
-## Key Components
+### Key Components
 
 1. **Install Dependencies**:
    - `transformers`
