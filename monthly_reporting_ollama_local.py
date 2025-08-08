@@ -106,8 +106,8 @@ auth = Auth.Token(access_token)
 g = Github(auth=auth)
 
 # --- Define Reporting Period and Author ---
-date_start = datetime.fromisoformat("2025-04-01")
-date_end = datetime.fromisoformat("2025-05-01")
+date_start = datetime.fromisoformat("2025-07-01")
+date_end = datetime.fromisoformat("2025-08-01")
 author_filter = g.get_user().login
 
 print(f"Fetching commits for user '{author_filter}' between {date_start.date()} and {date_end.date()}")
