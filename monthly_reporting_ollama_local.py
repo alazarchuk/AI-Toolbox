@@ -39,7 +39,6 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-
 # --- Configuration ---
 # Set your Ollama API endpoint and model via environment variables
 # Set OLLAMA_HOST and OLLAMA_MODEL in your environment
@@ -55,6 +54,16 @@ if not OLLAMA_HOST or not OLLAMA_MODEL:
     raise ValueError(
         "Ollama host and model must be provided via environment variables.\n"
         "Please set 'OLLAMA_HOST' and 'OLLAMA_MODEL'."
+    )
+
+# Step 2: Set up GitHub access and parameters from environment variables
+access_token = os.getenv('GITHUB_TOKEN')
+github_organizations_str = os.getenv('GITHUB_ORGANIZATIONS')
+
+if not access_token or not github_organizations_str:
+    raise ValueError(
+        "GitHub token and organizations must be provided via environment variables.\n"
+        "Please set 'GITHUB_TOKEN' and 'GITHUB_ORGANIZATIONS'."
     )
 
 # --- Ollama API Function ---
@@ -75,7 +84,7 @@ def generate_with_ollama(messages):
         "stream": False,
         "options": {
             "temperature": 0.0,
-            "num_ctx": 16384
+            "num_ctx": 14336
         }
     }
     try:
@@ -89,17 +98,6 @@ def generate_with_ollama(messages):
         return "Error: Unexpected response format from Ollama."
     except Exception as e:
         return f"An unexpected error occurred: {e}"
-
-
-# Step 2: Set up GitHub access and parameters from environment variables
-access_token = os.getenv('GITHUB_TOKEN')
-github_organizations_str = os.getenv('GITHUB_ORGANIZATIONS')
-
-if not access_token or not github_organizations_str:
-    raise ValueError(
-        "GitHub token and organizations must be provided via environment variables.\n"
-        "Please set 'GITHUB_TOKEN' and 'GITHUB_ORGANIZATIONS'."
-    )
 
 github_organizations = github_organizations_str.split(",")
 auth = Auth.Token(access_token)
