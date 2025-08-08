@@ -15,11 +15,13 @@ Prerequisites:
 -----------------------------------------------------------------------------
 Setup:
 1. Install required Python packages:
-   pip install PyGithub requests
+   pip install -r requirements.txt
 
-2. Set the following environment variables:
-   export GITHUB_TOKEN='your_github_personal_access_token'
-   export GITHUB_ORGANIZATIONS='org1,org2'
+2. Set the following environment variables in a .env file:
+   GITHUB_TOKEN='your_github_personal_access_token'
+   GITHUB_ORGANIZATIONS='org1,org2'
+   OLLAMA_HOST='http://your-remote-machine-ip:11434'
+   OLLAMA_MODEL='phi4'
 
 3. Configure the Ollama settings in the script below.
 -----------------------------------------------------------------------------
@@ -28,17 +30,32 @@ Setup:
 # Step 1: Import required libraries
 import os
 import requests
-import json
 from datetime import datetime
 from collections import defaultdict
 from github import Github, Auth
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
+
 
 # --- Configuration ---
-# Set your Ollama API endpoint and model here
-# IMPORTANT: Change this to your remote Ollama server's IP address or hostname
-OLLAMA_HOST = "http://your-remote-machine-ip:11434"
-# Specify the model you have running on Ollama (e.g., "phi3", "llama3", "gemma")
-OLLAMA_MODEL = "phi3"
+# Set your Ollama API endpoint and model via environment variables
+# Set OLLAMA_HOST and OLLAMA_MODEL in your environment
+# Example:
+# export OLLAMA_HOST="http://your-remote-machine-ip:11434"
+# export OLLAMA_MODEL="phi4"
+
+# Read Ollama configuration from environment variables
+OLLAMA_HOST = os.getenv('OLLAMA_HOST')
+OLLAMA_MODEL = os.getenv('OLLAMA_MODEL')
+
+if not OLLAMA_HOST or not OLLAMA_MODEL:
+    raise ValueError(
+        "Ollama host and model must be provided via environment variables.\n"
+        "Please set 'OLLAMA_HOST' and 'OLLAMA_MODEL'."
+    )
 
 # --- Ollama API Function ---
 def generate_with_ollama(messages):
@@ -57,7 +74,8 @@ def generate_with_ollama(messages):
         "messages": messages,
         "stream": False,
         "options": {
-            "temperature": 0.0
+            "temperature": 0.0,
+            "num_ctx": 16384
         }
     }
     try:
@@ -88,8 +106,8 @@ auth = Auth.Token(access_token)
 g = Github(auth=auth)
 
 # --- Define Reporting Period and Author ---
-date_start = datetime.fromisoformat("2025-03-01")
-date_end = datetime.fromisoformat("2025-04-01")
+date_start = datetime.fromisoformat("2025-04-01")
+date_end = datetime.fromisoformat("2025-05-01")
 author_filter = g.get_user().login
 
 print(f"Fetching commits for user '{author_filter}' between {date_start.date()} and {date_end.date()}")
