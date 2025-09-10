@@ -47,56 +47,57 @@ load_dotenv()
 # export OLLAMA_MODEL="phi4"
 
 # Read Ollama configuration from environment variables
-OLLAMA_HOST = os.getenv("OLLAMA_HOST")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL")
+OLLAMA_HOST = os.getenv('OLLAMA_HOST')
+OLLAMA_MODEL = os.getenv('OLLAMA_MODEL')
 
 if not OLLAMA_HOST or not OLLAMA_MODEL:
-  raise ValueError(
-    "Ollama host and model must be provided via environment variables.\n"
-    "Please set 'OLLAMA_HOST' and 'OLLAMA_MODEL'."
-  )
+    raise ValueError(
+        "Ollama host and model must be provided via environment variables.\n"
+        "Please set 'OLLAMA_HOST' and 'OLLAMA_MODEL'."
+    )
 
 # Step 2: Set up GitHub access and parameters from environment variables
-access_token = os.getenv("GITHUB_TOKEN")
-github_organizations_str = os.getenv("GITHUB_ORGANIZATIONS")
+access_token = os.getenv('GITHUB_TOKEN')
+github_organizations_str = os.getenv('GITHUB_ORGANIZATIONS')
 
 if not access_token or not github_organizations_str:
-  raise ValueError(
-    "GitHub token and organizations must be provided via environment variables.\n"
-    "Please set 'GITHUB_TOKEN' and 'GITHUB_ORGANIZATIONS'."
-  )
-
+    raise ValueError(
+        "GitHub token and organizations must be provided via environment variables.\n"
+        "Please set 'GITHUB_TOKEN' and 'GITHUB_ORGANIZATIONS'."
+    )
 
 # --- Ollama API Function ---
 def generate_with_ollama(messages):
-  """
-  Sends a request to the Ollama API to generate text based on the provided messages.
+    """
+    Sends a request to the Ollama API to generate text based on the provided messages.
 
-  Args:
-    messages (list): A list of message dictionaries in the Ollama chat API format.
+    Args:
+        messages (list): A list of message dictionaries in the Ollama chat API format.
 
-  Returns:
-    str: The generated text content from the model, or an error message.
-  """
-  api_url = f"{OLLAMA_HOST}/api/chat"
-  payload = {
-    "model": OLLAMA_MODEL,
-    "messages": messages,
-    "stream": False,
-    "options": {"temperature": 0.0, "num_ctx": 1024 * 12},
-  }
-  try:
-    response = requests.post(api_url, json=payload, timeout=60)
-    response.raise_for_status()  # Raise an exception for bad status codes (4xx or 5xx)
-    response_data = response.json()
-    return response_data["message"]["content"]
-  except requests.exceptions.RequestException as e:
-    return f"Error connecting to Ollama: {e}"
-  except KeyError:
-    return "Error: Unexpected response format from Ollama."
-  except Exception as e:
-    return f"An unexpected error occurred: {e}"
-
+    Returns:
+        str: The generated text content from the model, or an error message.
+    """
+    api_url = f"{OLLAMA_HOST}/api/chat"
+    payload = {
+        "model": OLLAMA_MODEL,
+        "messages": messages,
+        "stream": False,
+        "options": {
+            "temperature": 0.0,
+            "num_ctx": 1024*12
+        }
+    }
+    try:
+        response = requests.post(api_url, json=payload, timeout=60)
+        response.raise_for_status()  # Raise an exception for bad status codes (4xx or 5xx)
+        response_data = response.json()
+        return response_data['message']['content']
+    except requests.exceptions.RequestException as e:
+        return f"Error connecting to Ollama: {e}"
+    except KeyError:
+        return "Error: Unexpected response format from Ollama."
+    except Exception as e:
+        return f"An unexpected error occurred: {e}"
 
 github_organizations = github_organizations_str.split(",")
 auth = Auth.Token(access_token)
@@ -110,89 +111,70 @@ date_end = today.replace(day=1)
 date_start = (date_end.replace(day=1) - timedelta(days=1)).replace(day=1)
 author_filter = g.get_user().login
 
-print(
-  f"Fetching commits for user '{author_filter}' between {date_start.date()} and {date_end.date()}"
-)
+print(f"Fetching commits for user '{author_filter}' between {date_start.date()} and {date_end.date()}")
 print("-" * 60)
 
 # Step 3: Fetch commits from GitHub
 commits_per_repo = defaultdict(list)
 
 for org_name in github_organizations:
-  org_name = org_name.strip()  # Clean up any whitespace
-  try:
-    org = g.get_organization(org_name)
-    print(f"Scanning organization: {org_name}")
-    for repo in org.get_repos():
-      try:
-        commits = repo.get_commits(
-          since=date_start, until=date_end, author=author_filter
-        )
-        if commits.totalCount > 0:
-          repo_key = f"{org.name} -> {repo.name}"
-          print(f"  Found {commits.totalCount} commits in {repo_key}")
-          for commit in commits:
-            commits_per_repo[repo_key].append(commit.commit.message)
-      except Exception as e:
-        print(f"Could not process repo {repo.name}. Reason: {e}")
-  except Exception as e:
-    print(f"Could not access organization {org_name}. Reason: {e}")
+    org_name = org_name.strip() # Clean up any whitespace
+    try:
+        org = g.get_organization(org_name)
+        print(f"Scanning organization: {org_name}")
+        for repo in org.get_repos():
+            try:
+                commits = repo.get_commits(since=date_start, until=date_end, author=author_filter)
+                if commits.totalCount > 0:
+                    repo_key = f"{org.name} -> {repo.name}"
+                    print(f"  Found {commits.totalCount} commits in {repo_key}")
+                    for commit in commits:
+                        commits_per_repo[repo_key].append(commit.commit.message)
+            except Exception as e:
+                print(f"Could not process repo {repo.name}. Reason: {e}")
+    except Exception as e:
+        print(f"Could not access organization {org_name}. Reason: {e}")
 
 
 # Step 4: Process commits for each repository to generate and translate summary
 if not commits_per_repo:
-  print("\nNo commits found for the specified user and period. Exiting.")
+    print("\nNo commits found for the specified user and period. Exiting.")
 else:
-  for repo, commits in commits_per_repo.items():
-    # --- Generate Summary ---
-    summary_prompt_messages = [
-      {
-        "role": "user",
-        "content": f"""Write one sentence summary in the past tense about the work done, based on these commit messages.
-        Keep it under 20 words.
-        Exclude any mentions of pull requests, commits, and merges. Use passive voice.
-        Commits:
-        {"\n".join(commits)}""",
-      }
-    ]
+    for repo, commits in commits_per_repo.items():
+        # --- Generate Summary ---
+        summary_prompt_messages = [
+            {
+                "role": "user",
+                "content": f"""Write one sentence summary in the past tense about the work done, based on these commit messages.
+                Keep it under 20 words.
+                Exclude any mentions of pull requests, commits, and merges. Use passive voice.
+                Commits:
+                {"\n".join(commits)}"""
+            }
+        ]
 
-    print("=" * 60)
-    print(repo)
-    print("-" * 60)
+        print("=" * 60)
+        print(repo)
+        print("-" * 60)
 
-    print("Generating summary...")
-    summary = generate_with_ollama(summary_prompt_messages)
-    print(f"Summary: {summary}")
-    print("-" * 60)
+        print("Generating summary...")
+        summary = generate_with_ollama(summary_prompt_messages)
+        print(f"Summary: {summary}")
+        print("-" * 60)
 
-    # --- Translate Summary ---
-    translate_prompt_messages = [
-      {
-        "role": "system",
-        "content": "You are a helpful assistant that translates development work summaries from English to Ukrainian.",
-      },
-      {
-        "role": "user",
-        "content": "Fixed issues related to seeds and restoring files",
-      },
-      {
-        "role": "assistant",
-        "content": "Виправив помилки, пов'язані із сідами та відновленням файлів",
-      },
-      {"role": "user", "content": "Added additional fields to Address"},
-      {"role": "assistant", "content": "Додав додаткові поля до Адреси"},
-      {
-        "role": "user",
-        "content": "Refactored exception handling, enhanced code documentation and updated dependencies",
-      },
-      {
-        "role": "assistant",
-        "content": "Відрефакторив обробку помилок, покращив документацію коду і оновив залежності",
-      },
-      {"role": "user", "content": summary},
-    ]
+        # --- Translate Summary ---
+        translate_prompt_messages = [
+            {"role": "system", "content": "You are a helpful assistant that translates development work summaries from English to Ukrainian."},
+            {"role": "user", "content": "Fixed issues related to seeds and restoring files"},
+            {"role": "assistant", "content": "Виправив помилки, пов'язані із сідами та відновленням файлів"},
+            {"role": "user", "content": "Added additional fields to Address"},
+            {"role": "assistant", "content": "Додав додаткові поля до Адреси"},
+            {"role": "user", "content": "Refactored exception handling, enhanced code documentation and updated dependencies"},
+            {"role": "assistant", "content": "Відрефакторив обробку помилок, покращив документацію коду і оновив залежності"},
+            {"role": "user", "content": summary}
+        ]
 
-    print("Translating summary to Ukrainian...")
-    translated_summary = generate_with_ollama(translate_prompt_messages)
-    print(f"Переклад: {translated_summary}")
-    print("=" * 60)
+        print("Translating summary to Ukrainian...")
+        translated_summary = generate_with_ollama(translate_prompt_messages)
+        print(f"Переклад: {translated_summary}")
+        print("=" * 60)
