@@ -30,7 +30,7 @@ Setup:
 # Step 1: Import required libraries
 import os
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta
 from collections import defaultdict
 from github import Github, Auth
 from dotenv import load_dotenv
@@ -84,7 +84,7 @@ def generate_with_ollama(messages):
         "stream": False,
         "options": {
             "temperature": 0.0,
-            "num_ctx": 14336
+            "num_ctx": 1024*12
         }
     }
     try:
@@ -104,8 +104,11 @@ auth = Auth.Token(access_token)
 g = Github(auth=auth)
 
 # --- Define Reporting Period and Author ---
-date_start = datetime.fromisoformat("2025-07-01")
-date_end = datetime.fromisoformat("2025-08-01")
+today = datetime.now()
+# First day of current month
+date_end = today.replace(day=1)
+# First day of previous month
+date_start = (date_end.replace(day=1) - timedelta(days=1)).replace(day=1)
 author_filter = g.get_user().login
 
 print(f"Fetching commits for user '{author_filter}' between {date_start.date()} and {date_end.date()}")
@@ -144,7 +147,7 @@ else:
                 "role": "user",
                 "content": f"""Write one sentence summary in the past tense about the work done, based on these commit messages.
                 Keep it under 20 words.
-                Exclude any mentions of pull requests, commits, and merges.
+                Exclude any mentions of pull requests, commits, and merges. Use passive voice.
                 Commits:
                 {"\n".join(commits)}"""
             }
