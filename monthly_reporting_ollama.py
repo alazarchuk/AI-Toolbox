@@ -86,7 +86,7 @@ def generate_with_ollama(messages):
         "options": {"temperature": 0.0, "num_ctx": 1024 * 12},
     }
     try:
-        response = requests.post(api_url, json=payload, timeout=60)
+        response = requests.post(api_url, json=payload, timeout=600)
         response.raise_for_status()  # Raise an exception for bad status codes (4xx or 5xx)
         response_data = response.json()
         return response_data["message"]["content"]
@@ -160,7 +160,6 @@ else:
         print(repo)
         print("-" * 60)
 
-        print("Generating summary...")
         summary = generate_with_ollama(summary_prompt_messages)
         print(f"Summary: {summary}")
         print("-" * 60)
@@ -192,7 +191,6 @@ else:
             {"role": "user", "content": summary},
         ]
 
-        print("Translating summary to Ukrainian...")
         translated_summary = generate_with_ollama(translate_prompt_messages)
         print(f"Переклад: {translated_summary}")
         print("=" * 60)
