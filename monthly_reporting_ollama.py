@@ -83,7 +83,10 @@ def generate_with_ollama(messages):
         "model": OLLAMA_MODEL,
         "messages": messages,
         "stream": False,
-        "options": {"temperature": 0.0, "num_ctx": 1024 * 12},
+        "options": {
+            "temperature": 0.0,
+            # "num_ctx": 1024 * 12
+        },
     }
     try:
         response = requests.post(api_url, json=payload, timeout=600)
