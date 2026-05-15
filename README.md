@@ -39,5 +39,45 @@ This Jupyter Notebook generates a monthly report summarizing the development wor
    - Use the text generation model to create summaries of commit messages.
    - Translate the summaries into Ukrainian.
 
-7. **Output**:
-   - Print the repository names, summaries, and translated summaries.
+### Output
+- Print the repository names, summaries, and translated summaries.
+
+## monthly_reporting_ollama.py
+
+This script fetches GitHub commits for specified organizations and a given date range, generates a one-sentence summary for each repository's commits, and translates that summary into Ukrainian using a remote Ollama instance.
+
+### Prerequisites
+
+1.  **Python 3.x**: Ensure Python is installed on your system.
+2.  **Ollama**: An Ollama instance must be running and accessible on your network.
+3.  **GitHub Token**: A Personal Access Token with `repo` scope is required.
+
+### Setup
+
+1.  **Virtual Environment**: Create and activate a virtual environment:
+    ```bash
+    python -m venv .venv
+    source .venv/bin/activate
+    ```
+
+2.  **Install Dependencies**:
+    ```bash
+    pip install -r requirements.txt
+    ```
+
+3.  **Environment Variables**: Create a `.env` file in the root directory and add the following:
+    ```env
+    GITHUB_TOKEN='your_github_personal_access_token'
+    GITHUB_ORGANIZATIONS='org1,org2'
+    OLLAMA_HOST='http://your-remote-machine-ip:11434'
+    OLLAMA_MODEL='phi4'
+    ```
+
+### Running the Script
+
+Activate the virtual environment and execute the script:
+```bash
+source .venv/bin/activate
+python monthly_reporting_ollama.py
+```
+
