@@ -6,11 +6,15 @@ This script fetches GitHub commits for specified organizations and a given date 
 generates a one-sentence summary for each repository's commits, and then
 translates that summary into Ukrainian using a remote Ollama instance.
 
+Optionally, it can save collected commits to a YAML file, or skip GitHub collection
+and resume directly from a previously saved YAML file.
+
 -----------------------------------------------------------------------------
 Prerequisites:
 1. Python 3.x installed.
 2. An Ollama instance running and accessible on your network.
 3. GitHub Personal Access Token with 'repo' scope.
+3. GitHub Personal Access Token with 'repo' scope (unless resuming from file).
 
 -----------------------------------------------------------------------------
 Setup:
@@ -27,8 +31,10 @@ Setup:
 -----------------------------------------------------------------------------
 """
 
+import argparse
 from collections import defaultdict
 from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 import os
 import sys
@@ -36,6 +42,7 @@ import sys
 from dotenv import load_dotenv
 from github import Auth, Github, GithubException
 import requests
+import yaml
 
 
 # --- Configuration ---
@@ -47,12 +54,20 @@ class Config:
     ollama_model: str
     github_token: str
     github_organizations: list[str]
+    github_token: str | None = None
+    github_organizations: list[str] = field(default_factory=list)
     timeout: int = 600
+    save_commits_path: str | None = None
+    resume_from_path: str | None = None
 
     @classmethod
     def from_env(cls) -> "Config":
+    def from_env(cls, require_github: bool = True) -> "Config":
         """
         Loads configuration from environment variables.
+
+        Args:
+            require_github: Whether GitHub credentials are required. Defaults to True.
 
         Raises:
             ValueError: If required environment variables are missing.
@@ -70,6 +85,7 @@ class Config:
         github_token = os.getenv("GITHUB_TOKEN")
         github_organizations_str = os.getenv("GITHUB_ORGANIZATIONS")
         if not github_token or not github_organizations_str:
+        if require_github and (not github_token or not github_organizations_str):
             raise ValueError(
                 "GitHub token and organizations must be provided via environment variables.\n"
                 "Please set 'GITHUB_TOKEN' and 'GITHUB_ORGANIZATIONS'."
@@ -80,13 +96,26 @@ class Config:
             for org in github_organizations_str.split(",")
             if org.strip()
         ]
+        github_organizations: list[str] = []
+        if github_organizations_str:
+            github_organizations = [
+                org.strip()
+                for org in github_organizations_str.split(",")
+                if org.strip()
+            ]
+
+        save_commits_path = os.getenv("SAVE_COMMITS")
+        resume_from_path = os.getenv("RESUME_FROM")
 
         return cls(
             ollama_host=ollama_host.rstrip("/"),
             ollama_model=ollama_model,
             github_token=github_token,
             github_organizations=github_organizations,
+            save_commits_path=save_commits_path,
+            resume_from_path=resume_from_path,
         )
+
 
 
 def get_previous_month_date_range(
@@ -413,6 +442,89 @@ class GitHubService:
         return dict(commits_per_repo)
 
 
+# --- YAML Serialization and Storage ---
+def save_commits_to_yaml(
+    commits_per_repo: dict[str, list[str]],
+    file_path: str,
+) -> None:
+    """
+    Saves collected commits grouped by repository to a YAML file.
+
+    Args:
+        commits_per_repo: Mapping of repository display names to commit messages.
+        file_path: Path to the destination YAML file.
+    """
+    dir_name = os.path.dirname(file_path)
+    if dir_name:
+        os.makedirs(dir_name, exist_ok=True)
+
+    with open(file_path, "w", encoding="utf-8") as f:
+        yaml.safe_dump(
+            commits_per_repo,
+            f,
+            default_flow_style=False,
+            allow_unicode=True,
+            sort_keys=False,
+        )
+
+
+def load_commits_from_yaml(file_path: str) -> dict[str, list[str]]:
+    """
+    Loads commits grouped by repository from a YAML file.
+
+    Args:
+        file_path: Path to the YAML file.
+
+    Returns:
+        dict[str, list[str]]: Mapping of repository display names to commit messages.
+
+    Raises:
+        FileNotFoundError: If the file does not exist.
+        ValueError: If the file content is invalid.
+    """
+    if not os.path.exists(file_path):
+        raise FileNotFoundError(f"Commits file not found: {file_path}")
+
+    with open(file_path, "r", encoding="utf-8") as f:
+        data = yaml.safe_load(f)
+
+    if data is None:
+        return {}
+
+    if not isinstance(data, dict):
+        raise ValueError(
+            f"Invalid YAML structure in '{file_path}': expected a dictionary "
+            "mapping repository names to lists of commit messages."
+        )
+
+    if "commits" in data and isinstance(data["commits"], dict):
+        data = data["commits"]
+    elif "repositories" in data and isinstance(data["repositories"], dict):
+        data = data["repositories"]
+
+    normalized: dict[str, list[str]] = {}
+    for repo_name, commits in data.items():
+        repo_str = str(repo_name)
+        if commits is None:
+            continue
+        if isinstance(commits, list):
+            commit_messages = [
+                c if isinstance(c, str) else str(c) for c in commits
+            ]
+            if commit_messages:
+                normalized[repo_str] = commit_messages
+        elif isinstance(commits, str):
+            if commits.strip():
+                normalized[repo_str] = [commits]
+        else:
+            raise ValueError(
+                f"Invalid commit data for repository '{repo_name}' in '{file_path}': "
+                "expected a list of commit messages."
+            )
+
+    return normalized
+
+
 # --- Report Generator ---
 @dataclass
 class RepoReport:
@@ -447,22 +559,40 @@ class MonthlyReportGenerator:
     ):
         self.config = config
         self.github_service = github_service or GitHubService(config.github_token)
+        self._github_service = github_service
         self.ollama_client = ollama_client or OllamaClient(
             host=config.ollama_host,
             model=config.ollama_model,
             timeout=config.timeout,
         )
+        self.save_commits_path = config.save_commits_path
+        self.resume_from_path = config.resume_from_path
 
     def generate_reports(self, reference_date: datetime | None = None) -> list[RepoReport]:
         """
         Gathers commits and generates summarized and translated reports for each repo.
+    @property
+    def github_service(self) -> GitHubService:
+        """Lazily initialized GitHub service instance."""
+        if self._github_service is None:
+            if not self.config.github_token:
+                raise ValueError("GitHub token is required to interact with GitHub.")
+            self._github_service = GitHubService(self.config.github_token)
+        return self._github_service
 
         Args:
             reference_date: Optional reference date to compute the report period.
+    @github_service.setter
+    def github_service(self, value: GitHubService | None) -> None:
+        self._github_service = value
 
         Returns:
             list[RepoReport]: List of generated reports per repository.
         """
+    def _collect_commits_from_github(
+        self, reference_date: datetime | None = None
+    ) -> dict[str, list[str]]:
+        """Fetches commits from GitHub for configured organizations."""
         date_start, date_end = get_previous_month_date_range(reference_date)
         author_filter = self.github_service.get_authenticated_user_login()
 
@@ -473,14 +603,69 @@ class MonthlyReportGenerator:
         print("-" * 60)
 
         commits_per_repo = self.github_service.fetch_commits_by_repo(
+        return self.github_service.fetch_commits_by_repo(
             organizations=self.config.github_organizations,
             start_date=date_start,
             end_date=date_end,
             author=author_filter,
         )
 
+    def generate_reports(
+        self,
+        reference_date: datetime | None = None,
+        save_commits_path: str | None = None,
+        resume_from_path: str | None = None,
+    ) -> list[RepoReport]:
+        """
+        Gathers commits and generates summarized and translated reports for each repo.
+
+        Args:
+            reference_date: Optional reference date to compute the report period.
+            save_commits_path: Optional path to save collected commits to YAML.
+            resume_from_path: Optional path to load commits from YAML, skipping GitHub.
+
+        Returns:
+            list[RepoReport]: List of generated reports per repository.
+        """
+        effective_resume = resume_from_path or self.resume_from_path
+        effective_save = save_commits_path or self.save_commits_path
+
+        if effective_resume:
+            print(f"Skipping commit collection; resuming from file: {effective_resume}")
+            print("-" * 60)
+            commits_per_repo = load_commits_from_yaml(effective_resume)
+            print(
+                f"Loaded {sum(len(c) for c in commits_per_repo.values())} commits across "
+                f"{len(commits_per_repo)} repositories from '{effective_resume}'."
+            )
+        else:
+            commits_per_repo = self._collect_commits_from_github(reference_date)
+            if effective_save:
+                save_commits_to_yaml(commits_per_repo, effective_save)
+                print(
+                    f"Saved {sum(len(c) for c in commits_per_repo.values())} "
+                    f"collected commits to '{effective_save}'."
+                )
+
+        if effective_resume and effective_save and effective_save != effective_resume:
+            save_commits_to_yaml(commits_per_repo, effective_save)
+            print(
+                f"Saved {sum(len(c) for c in commits_per_repo.values())} "
+                f"commits to '{effective_save}'."
+            )
+
+        commits_per_repo = {
+            repo: commits for repo, commits in commits_per_repo.items() if commits
+        }
+
         if not commits_per_repo:
             print("\nNo commits found for the specified user and period.")
+            msg = (
+                f"\nNo commits found in '{effective_resume}'."
+                if effective_resume
+                else "\nNo commits found for the specified user and period."
+            )
+            print(msg)
             return []
 
         reports: list[RepoReport] = []
@@ -518,6 +703,8 @@ class MonthlyReportGenerator:
         self,
         reports: list[RepoReport] | None = None,
         reference_date: datetime | None = None,
+        save_commits_path: str | None = None,
+        resume_from_path: str | None = None,
     ) -> FinalReport | None:
         """
         Assembles the final report summarized into 3-4 sentences using AI.
@@ -528,12 +715,19 @@ class MonthlyReportGenerator:
         Args:
             reports: Optional list of RepoReport instances. If not provided, generates them.
             reference_date: Optional reference date to compute the report period.
+            save_commits_path: Optional path to save collected commits to YAML.
+            resume_from_path: Optional path to load commits from YAML, skipping GitHub.
 
         Returns:
             FinalReport | None: The assembled final report, or None if no reports available.
         """
         if reports is None:
             reports = self.generate_reports(reference_date)
+            reports = self.generate_reports(
+                reference_date=reference_date,
+                save_commits_path=save_commits_path,
+                resume_from_path=resume_from_path,
+            )
 
         if not reports:
             return None
@@ -567,6 +761,8 @@ class MonthlyReportGenerator:
         self,
         reports: list[RepoReport] | None = None,
         reference_date: datetime | None = None,
+        save_commits_path: str | None = None,
+        resume_from_path: str | None = None,
     ) -> FinalReport | None:
         """
         Assembles and outputs the final report to stdout.
@@ -574,16 +770,28 @@ class MonthlyReportGenerator:
         Args:
             reports: Optional list of RepoReport instances. If not provided, generates them.
             reference_date: Optional reference date to compute the report period.
+            save_commits_path: Optional path to save collected commits to YAML.
+            resume_from_path: Optional path to load commits from YAML, skipping GitHub.
 
         Returns:
             FinalReport | None: The assembled final report.
         """
         final_report = self.assemble_final_report(reports, reference_date)
+        final_report = self.assemble_final_report(
+            reports=reports,
+            reference_date=reference_date,
+            save_commits_path=save_commits_path,
+            resume_from_path=resume_from_path,
+        )
         self.print_final_report(final_report)
         return final_report
 
     def run(
         self, reference_date: datetime | None = None
+        self,
+        reference_date: datetime | None = None,
+        save_commits_path: str | None = None,
+        resume_from_path: str | None = None,
     ) -> tuple[list[RepoReport], FinalReport | None]:
         """
         Executes the monthly reporting workflow, prints per-repository reports,
@@ -591,11 +799,18 @@ class MonthlyReportGenerator:
 
         Args:
             reference_date: Optional reference date to compute the report period.
+            save_commits_path: Optional path to save collected commits to YAML.
+            resume_from_path: Optional path to load commits from YAML, skipping GitHub.
 
         Returns:
             tuple[list[RepoReport], FinalReport | None]: Generated reports and final report.
         """
         reports = self.generate_reports(reference_date)
+        reports = self.generate_reports(
+            reference_date=reference_date,
+            save_commits_path=save_commits_path,
+            resume_from_path=resume_from_path,
+        )
         if not reports:
             return [], None
 
@@ -606,15 +821,110 @@ class MonthlyReportGenerator:
 
 
 def main() -> None:
+# --- CLI and Main Entry Point ---
+def parse_args(args: list[str] | None = None) -> argparse.Namespace:
+    """
+    Parses command-line arguments.
+
+    Args:
+        args: Optional list of command-line arguments (defaults to sys.argv[1:]).
+
+    Returns:
+        argparse.Namespace: Parsed command-line arguments.
+    """
+    parser = argparse.ArgumentParser(
+        description="Generate monthly development reports from GitHub commits using Ollama."
+    )
+    parser.add_argument(
+        "--save-commits",
+        "-s",
+        "--save-file",
+        dest="save_commits",
+        nargs="?",
+        const="commits.yaml",
+        default=None,
+        metavar="FILE",
+        help=(
+            "Save collected commits to a YAML file. If specified without a filename, "
+            "defaults to 'commits.yaml'."
+        ),
+    )
+    parser.add_argument(
+        "--resume-from",
+        "-r",
+        "--from-file",
+        "--load-commits",
+        dest="resume_from",
+        nargs="?",
+        const="commits.yaml",
+        default=None,
+        metavar="FILE",
+        help=(
+            "Skip collecting commits from GitHub and resume from a YAML file. "
+            "If specified without a filename, defaults to 'commits.yaml'."
+        ),
+    )
+    parser.add_argument(
+        "--skip-collecting",
+        dest="skip_collecting",
+        nargs="?",
+        const="commits.yaml",
+        default=None,
+        metavar="FILE",
+        help=(
+            "Alias for --resume-from: skip collecting commits and load from the specified "
+            "YAML file (defaults to 'commits.yaml')."
+        ),
+    )
+    return parser.parse_args(args)
+
+
+def resolve_resume_path(args: argparse.Namespace) -> str | None:
+    """
+    Resolves the file path to resume from, giving precedence to explicit paths.
+
+    Args:
+        args: Parsed command-line arguments.
+
+    Returns:
+        str | None: Resolved path to resume from, or None if skipping collection was not requested.
+    """
+    resume = args.resume_from
+    skip = args.skip_collecting
+    if resume and skip:
+        if resume != "commits.yaml":
+            return resume
+        return skip
+    return resume or skip
+
+
+def main(argv: list[str] | None = None) -> None:
     """Main application entry point."""
+    args = parse_args(argv)
+    resume_from = resolve_resume_path(args)
+    save_commits = args.save_commits
+
+    require_github = resume_from is None and not os.getenv("RESUME_FROM")
     try:
         config = Config.from_env()
+        config = Config.from_env(require_github=require_github)
     except ValueError as err:
         print(f"Configuration error:\n{err}", file=sys.stderr)
         sys.exit(1)
 
     generator = MonthlyReportGenerator(config)
     generator.run()
+    if save_commits:
+        config.save_commits_path = save_commits
+    if resume_from:
+        config.resume_from_path = resume_from
+
+    generator = MonthlyReportGenerator(config=config)
+    try:
+        generator.run()
+    except (FileNotFoundError, ValueError) as err:
+        print(f"Error:\n{err}", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

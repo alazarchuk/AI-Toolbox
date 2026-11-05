@@ -81,3 +81,28 @@ source .venv/bin/activate
 python monthly_reporting_ollama.py
 ```
 
+#### Command-Line Options
+
+- **Save collected commits to a YAML file**:
+  ```bash
+  # Saves to default 'commits.yaml'
+  python monthly_reporting_ollama.py --save-commits
+
+  # Or specify a custom output path
+  python monthly_reporting_ollama.py --save-commits custom_commits.yaml
+  ```
+
+- **Skip collecting commits and resume from file**:
+  ```bash
+  # Resumes from default 'commits.yaml' (skips GitHub API calls)
+  python monthly_reporting_ollama.py --resume-from
+
+  # Or specify a custom YAML file
+  python monthly_reporting_ollama.py --resume-from custom_commits.yaml
+
+  # Alias --skip-collecting is also supported
+  python monthly_reporting_ollama.py --skip-collecting custom_commits.yaml
+  ```
+
+Optionally, you can also specify default paths in your `.env` file using `SAVE_COMMITS` and `RESUME_FROM`.
+
